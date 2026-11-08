@@ -1,69 +1,342 @@
-import Image from "next/image";
+'use client'
 
-export default function Home() {
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import Link from 'next/link'
+import Modal from '@/components/Modal'
+import AuthorForm, { type AuthorFormData } from '@/components/AuthorForm'
+import { apiFetch } from '@/lib/api'
+import type { Author } from '@/lib/types'
+
+function StatCard({
+  label,
+  value,
+  hint,
+}: {
+  label: string
+  value: string | number
+  hint?: string
+}) {
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert h-5 w-[100px]"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the{" "}
-            <code className="rounded bg-black/[.06] px-1.5 py-0.5 font-mono text-[0.9em] dark:bg-white/[.08]">
-              page.tsx
-            </code>{" "}
-            file.
+    <div className="rounded-xl border border-stone-200 bg-white p-5 shadow-sm">
+      <p className="text-sm font-medium text-stone-500">{label}</p>
+      <p className="mt-1 text-3xl font-bold text-emerald-900">{value}</p>
+      {hint && <p className="mt-1 text-xs text-stone-400">{hint}</p>}
+    </div>
+  )
+}
+
+export default function DashboardPage() {
+  const [authors, setAuthors] = useState<Author[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const [modalOpen, setModalOpen] = useState(false)
+  const [editingAuthor, setEditingAuthor] = useState<Author | null>(null)
+  const [deletingId, setDeletingId] = useState<string | null>(null)
+
+  const loadAuthors = useCallback(async () => {
+    try {
+      const data = await apiFetch<Author[]>('/api/authors')
+      setAuthors(data)
+      setError('')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Error al cargar autores')
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    loadAuthors()
+  }, [loadAuthors])
+
+  // Estadísticas generales calculadas a partir de los autores y sus libros
+  const stats = useMemo(() => {
+    const books = authors.flatMap((author) => author.books ?? [])
+
+    const booksWithPages = books.filter((book) => book.pages)
+    const averagePages =
+      booksWithPages.length > 0
+        ? Math.round(
+            booksWithPages.reduce((sum, book) => sum + (book.pages ?? 0), 0) /
+              booksWithPages.length
+          )
+        : 0
+
+    const genreCounts = books.reduce<Record<string, number>>((acc, book) => {
+      if (book.genre) acc[book.genre] = (acc[book.genre] ?? 0) + 1
+      return acc
+    }, {})
+
+    const genres = Object.entries(genreCounts).sort((a, b) => b[1] - a[1])
+
+    const topAuthors = [...authors]
+      .sort((a, b) => (b._count?.books ?? 0) - (a._count?.books ?? 0))
+      .slice(0, 3)
+
+    return {
+      totalAuthors: authors.length,
+      totalBooks: books.length,
+      totalGenres: genres.length,
+      averagePages,
+      genres,
+      topAuthors,
+    }
+  }, [authors])
+
+  const openCreate = () => {
+    setEditingAuthor(null)
+    setModalOpen(true)
+  }
+
+  const openEdit = (author: Author) => {
+    setEditingAuthor(author)
+    setModalOpen(true)
+  }
+
+  const closeModal = useCallback(() => {
+    setModalOpen(false)
+    setEditingAuthor(null)
+  }, [])
+
+  const handleSubmit = async (form: AuthorFormData) => {
+    const payload = {
+      name: form.name.trim(),
+      email: form.email.trim(),
+      nationality: form.nationality.trim() || null,
+      bio: form.bio.trim() || null,
+      birthYear: form.birthYear || null,
+    }
+
+    if (editingAuthor) {
+      await apiFetch(`/api/authors/${editingAuthor.id}`, {
+        method: 'PUT',
+        body: JSON.stringify(payload),
+      })
+    } else {
+      await apiFetch('/api/authors', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      })
+    }
+
+    closeModal()
+    await loadAuthors()
+  }
+
+  const handleDelete = async (author: Author) => {
+    const count = author._count?.books ?? 0
+    const message =
+      count > 0
+        ? `¿Eliminar a "${author.name}"? También se eliminarán sus ${count} libro(s).`
+        : `¿Eliminar a "${author.name}"?`
+
+    if (!window.confirm(message)) return
+
+    setDeletingId(author.id)
+    try {
+      await apiFetch(`/api/authors/${author.id}`, { method: 'DELETE' })
+      await loadAuthors()
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Error al eliminar autor')
+    } finally {
+      setDeletingId(null)
+    }
+  }
+
+  const maxGenreCount = stats.genres[0]?.[1] ?? 1
+
+  return (
+    <div className="space-y-8">
+      {/* Encabezado */}
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-stone-900 sm:text-3xl">
+            Dashboard
           </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
+          <p className="mt-1 text-stone-500">
+            Gestiona los autores de la biblioteca y revisa sus estadísticas.
           </p>
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert h-[14px] w-4"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={14}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
+        <button
+          onClick={openCreate}
+          className="rounded-lg bg-emerald-700 px-4 py-2.5 text-sm font-medium text-white shadow-sm hover:bg-emerald-800"
+        >
+          + Nuevo autor
+        </button>
+      </div>
+
+      {/* Estadísticas generales */}
+      <section className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+        <StatCard label="Autores" value={loading ? '—' : stats.totalAuthors} />
+        <StatCard label="Libros" value={loading ? '—' : stats.totalBooks} />
+        <StatCard label="Géneros" value={loading ? '—' : stats.totalGenres} />
+        <StatCard
+          label="Promedio de páginas"
+          value={loading ? '—' : stats.averagePages}
+          hint="por libro"
+        />
+      </section>
+
+      {!loading && stats.totalBooks > 0 && (
+        <section className="grid gap-4 md:grid-cols-2">
+          <div className="rounded-xl border border-stone-200 bg-white p-5 shadow-sm">
+            <h2 className="font-semibold text-stone-900">Libros por género</h2>
+            <ul className="mt-4 space-y-3">
+              {stats.genres.map(([genre, count]) => (
+                <li key={genre}>
+                  <div className="mb-1 flex justify-between text-sm">
+                    <span className="text-stone-700">{genre}</span>
+                    <span className="font-medium text-stone-900">{count}</span>
+                  </div>
+                  <div className="h-2 rounded-full bg-stone-100">
+                    <div
+                      className="h-2 rounded-full bg-emerald-600"
+                      style={{ width: `${(count / maxGenreCount) * 100}%` }}
+                    />
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </div>
+
+          <div className="rounded-xl border border-stone-200 bg-white p-5 shadow-sm">
+            <h2 className="font-semibold text-stone-900">
+              Autores con más libros
+            </h2>
+            <ol className="mt-4 space-y-3">
+              {stats.topAuthors.map((author, index) => (
+                <li key={author.id} className="flex items-center gap-3">
+                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-amber-100 text-sm font-bold text-amber-800">
+                    {index + 1}
+                  </span>
+                  <Link
+                    href={`/authors/${author.id}`}
+                    className="min-w-0 flex-1 truncate text-sm font-medium text-stone-800 hover:text-emerald-700"
+                  >
+                    {author.name}
+                  </Link>
+                  <span className="text-sm text-stone-500">
+                    {author._count?.books ?? 0} libros
+                  </span>
+                </li>
+              ))}
+            </ol>
+          </div>
+        </section>
+      )}
+
+      {/* Lista de autores */}
+      <section>
+        <h2 className="mb-4 text-lg font-semibold text-stone-900">
+          Autores {!loading && `(${authors.length})`}
+        </h2>
+
+        {error && (
+          <div className="mb-4 flex items-center justify-between rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700">
+            <span>{error}</span>
+            <button onClick={loadAuthors} className="font-medium underline">
+              Reintentar
+            </button>
+          </div>
+        )}
+
+        {loading ? (
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {Array.from({ length: 6 }).map((_, i) => (
+              <div
+                key={i}
+                className="h-44 animate-pulse rounded-xl border border-stone-200 bg-white"
+              />
+            ))}
+          </div>
+        ) : authors.length === 0 ? (
+          <div className="rounded-xl border border-dashed border-stone-300 bg-white p-10 text-center">
+            <p className="text-stone-500">Aún no hay autores registrados.</p>
+            <button
+              onClick={openCreate}
+              className="mt-3 text-sm font-medium text-emerald-700 hover:underline"
+            >
+              Crear el primer autor
+            </button>
+          </div>
+        ) : (
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {authors.map((author) => {
+              const count = author._count?.books ?? 0
+              const details = [author.nationality, author.birthYear]
+                .filter(Boolean)
+                .join(' · ')
+
+              return (
+                <article
+                  key={author.id}
+                  className="flex flex-col rounded-xl border border-stone-200 bg-white p-5 shadow-sm transition-shadow hover:shadow-md"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <h3 className="truncate font-semibold text-stone-900">
+                        {author.name}
+                      </h3>
+                      <p className="truncate text-sm text-stone-500">
+                        {author.email}
+                      </p>
+                    </div>
+                    <span className="shrink-0 rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-800">
+                      {count} {count === 1 ? 'libro' : 'libros'}
+                    </span>
+                  </div>
+
+                  <p className="mt-2 text-sm text-stone-600">
+                    {details || 'Sin datos adicionales'}
+                  </p>
+
+                  {author.bio && (
+                    <p className="mt-2 line-clamp-2 text-sm text-stone-500">
+                      {author.bio}
+                    </p>
+                  )}
+
+                  <div className="mt-auto flex flex-wrap gap-2 pt-4">
+                    <Link
+                      href={`/authors/${author.id}`}
+                      className="rounded-lg bg-emerald-700 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-800"
+                    >
+                      Ver libros
+                    </Link>
+                    <button
+                      onClick={() => openEdit(author)}
+                      className="rounded-lg border border-stone-300 px-3 py-1.5 text-sm font-medium text-stone-700 hover:bg-stone-50"
+                    >
+                      Editar
+                    </button>
+                    <button
+                      onClick={() => handleDelete(author)}
+                      disabled={deletingId === author.id}
+                      className="rounded-lg border border-red-200 px-3 py-1.5 text-sm font-medium text-red-600 hover:bg-red-50 disabled:opacity-50"
+                    >
+                      {deletingId === author.id ? 'Eliminando...' : 'Eliminar'}
+                    </button>
+                  </div>
+                </article>
+              )
+            })}
+          </div>
+        )}
+      </section>
+
+      <Modal
+        open={modalOpen}
+        title={editingAuthor ? 'Editar autor' : 'Nuevo autor'}
+        onClose={closeModal}
+      >
+        <AuthorForm
+          key={editingAuthor?.id ?? 'new'}
+          initialData={editingAuthor}
+          submitLabel={editingAuthor ? 'Guardar cambios' : 'Crear autor'}
+          onSubmit={handleSubmit}
+          onCancel={closeModal}
+        />
+      </Modal>
     </div>
-  );
+  )
 }
